@@ -8,11 +8,32 @@
 <style>
   html,body{margin:0;height:100%;background:#000;overflow:hidden;font-family:monospace}
   #wrap{position:fixed;inset:0;display:flex;align-items:center;justify-content:center}
-  canvas{image-rendering:pixelated;image-rendering:crisp-edges;width:min(100vw,160vh);height:auto;background:#000;cursor:crosshair}
+  #view{position:relative;width:min(100vw,160vh)}
+  canvas{display:block;image-rendering:pixelated;image-rendering:crisp-edges;width:100%;height:auto;background:#000;cursor:crosshair}
+  #touch{position:absolute;inset:0;display:none;touch-action:none;user-select:none;-webkit-user-select:none;-webkit-touch-callout:none;--b:clamp(44px,16vmin,76px)}
+  #view.touch-on #touch{display:block}
+  .zone{position:absolute;top:0;bottom:0}
+  .zl{left:0;width:42%} .zr{right:0;width:58%}
+  .stick{position:absolute;width:var(--b);height:var(--b);margin:calc(var(--b)/-2) 0 0 calc(var(--b)/-2);border-radius:50%;border:2px solid rgba(255,255,255,.4);background:rgba(255,255,255,.08);display:none;pointer-events:none}
+  .stick i{position:absolute;left:50%;top:50%;width:46%;height:46%;margin:-23% 0 0 -23%;border-radius:50%;background:rgba(255,255,255,.45)}
+  .tb{position:absolute;width:var(--b);height:var(--b);border-radius:50%;border:2px solid rgba(255,255,255,.45);background:rgba(20,10,10,.45);color:#fff;font:bold 10px monospace;letter-spacing:.03em;touch-action:none;user-select:none;-webkit-user-select:none;padding:0}
+  .tb:active,.tb.on{background:rgba(216,50,31,.65)}
+  .tb.fire{right:2.5%;bottom:17%;width:calc(var(--b)*1.25);height:calc(var(--b)*1.25);border-color:rgba(255,120,100,.8)}
+  .tb.use{right:calc(2.5% + var(--b)*1.45);bottom:17%}
+  .tb.wpn{right:2.5%;bottom:calc(17% + var(--b)*1.5)}
+  .tb.map{right:calc(2.5% + var(--b)*1.45);bottom:calc(17% + var(--b)*1.2)}
 </style>
 </head>
 <body>
-<div id="wrap"><canvas id="c" width="320" height="200"></canvas></div>
+<div id="wrap"><div id="view"><canvas id="c" width="320" height="200"></canvas>
+<div id="touch" aria-hidden="true">
+  <div class="zone zl" id="zl"></div><div class="zone zr" id="zr"></div>
+  <div class="stick" id="stick"><i id="knob"></i></div>
+  <button class="tb fire" data-act="fire">FEUER</button>
+  <button class="tb use" data-act="use">TÜR</button>
+  <button class="tb wpn" data-act="wpn">WAFFE</button>
+  <button class="tb map" data-act="map">KARTE</button>
+</div></div></div>
 <script>
 'use strict';
 /* =====================================================================
@@ -294,6 +315,7 @@ let grid, MW, MH, doors, enemies, pickups, projs, player, stats, flow, flowTimer
 let state = 'title', paused = false, locked = false, titleAng = 0, clock = 0;
 const keys = {};
 let mouseDX = 0, fireHeld = false, showMap = false;
+const touch = { mx: 0, my: 0 };
 
 function loadLevel() {
   MH = MAP_SRC.length; MW = MAP_SRC[0].length;
@@ -548,14 +570,14 @@ function update(dt) {
   const turn = (keys.ArrowRight ? 1 : 0) - (keys.ArrowLeft ? 1 : 0);
   player.a += turn * P.turn * dt + mouseDX * P.mouse; mouseDX = 0;
   // Bewegen
-  const f = (keys.KeyW || keys.ArrowUp ? 1 : 0) - (keys.KeyS || keys.ArrowDown ? 1 : 0);
-  const s = (keys.KeyD ? 1 : 0) - (keys.KeyA ? 1 : 0);
+  const f = clamp((keys.KeyW || keys.ArrowUp ? 1 : 0) - (keys.KeyS || keys.ArrowDown ? 1 : 0) - touch.my, -1, 1);
+  const s = clamp((keys.KeyD ? 1 : 0) - (keys.KeyA ? 1 : 0) + touch.mx, -1, 1);
   const dx = Math.cos(player.a), dy = Math.sin(player.a);
   let vx = dx * f - dy * s, vy = dy * f + dx * s;
   const len = Math.hypot(vx, vy);
   if (len > 0) {
     if (len > 1) { vx /= len; vy /= len; }
-    const sp = (keys.ShiftLeft || keys.ShiftRight) ? P.run : P.speed;
+    const sp = (keys.ShiftLeft || keys.ShiftRight || Math.hypot(touch.mx, touch.my) > 0.92) ? P.run : P.speed;
     tryMove(player, vx * sp * dt, vy * sp * dt, P.radius);
     player.bob += dt * 9 * sp / P.speed;
   }
@@ -764,14 +786,14 @@ function frame(t) {
       'Finde die gelbe Karte, oeffne die rote Tuer,',
       'erreiche den gruenen Ausgang.',
       '',
-      'KLICK ODER ENTER ZUM STARTEN']);
+      'KLICK, TIPPEN ODER ENTER ZUM STARTEN']);
   } else if (state === 'dead' && stats.deadT > 0.8) {
-    screenText('DU BIST GESTORBEN', ['Abschuesse: ' + stats.kills + ' / ' + stats.total, '', 'R oder Enter: Neustart']);
+    screenText('DU BIST GESTORBEN', ['Abschuesse: ' + stats.kills + ' / ' + stats.total, '', 'R, Enter oder Tippen: Neustart']);
   } else if (state === 'win') {
     const m = Math.floor(stats.time / 60), s = Math.floor(stats.time % 60);
-    screenText('LEVEL GESCHAFFT', ['Abschuesse: ' + stats.kills + ' / ' + stats.total, 'Zeit: ' + m + ':' + (s < 10 ? '0' : '') + s, '', 'R oder Enter: Nochmal spielen'], '#30e070');
+    screenText('LEVEL GESCHAFFT', ['Abschuesse: ' + stats.kills + ' / ' + stats.total, 'Zeit: ' + m + ':' + (s < 10 ? '0' : '') + s, '', 'R, Enter oder Tippen: Nochmal spielen'], '#30e070');
   } else if (state === 'play' && paused) {
-    screenText('PAUSE', ['', 'Klick oder P: weiter']);
+    screenText('PAUSE', ['', 'Klick, Tippen oder P: weiter']);
   }
   requestAnimationFrame(frame);
 }
@@ -809,12 +831,73 @@ document.addEventListener('pointerlockchange', () => {
   if (was && !locked && state === 'play') paused = true;
 });
 
+// ---------- Touch-Steuerung (Smartphone) ----------
+(function () {
+  const view = document.getElementById('view'), zl = document.getElementById('zl'), zr = document.getElementById('zr');
+  const stick = document.getElementById('stick'), knob = document.getElementById('knob');
+  if (!view || !zl) return;
+  const cap = (el, id) => { try { el.setPointerCapture(id); } catch (err) {} };
+  const enable = () => view.classList.add('touch-on');
+  window.addEventListener('touchstart', enable, { once: true, passive: true });
+  if (window.matchMedia && matchMedia('(pointer:coarse)').matches) enable();
+  // Tippen auf Titel / Tod / Sieg / Pause
+  function gate() {
+    if (state === 'title') { startGame(); return true; }
+    if ((state === 'dead' && stats.deadT > 0.8) || state === 'win') { startGame(); return true; }
+    if (state === 'play' && paused) { paused = false; return true; }
+    return state !== 'play';
+  }
+  // Joystick links (schwebend, Ursprung = erster Fingerkontakt)
+  let jid = null, jx = 0, jy = 0; const JR = 46;
+  zl.addEventListener('pointerdown', e => {
+    e.preventDefault(); actx(); if (gate() || jid !== null) return;
+    jid = e.pointerId; cap(zl, jid);
+    const r = view.getBoundingClientRect(); jx = e.clientX; jy = e.clientY;
+    stick.style.display = 'block'; stick.style.left = (e.clientX - r.left) + 'px'; stick.style.top = (e.clientY - r.top) + 'px';
+    knob.style.transform = 'none';
+  });
+  zl.addEventListener('pointermove', e => {
+    if (e.pointerId !== jid) return;
+    let dx = (e.clientX - jx) / JR, dy = (e.clientY - jy) / JR; const m = Math.hypot(dx, dy);
+    if (m > 1) { dx /= m; dy /= m; }
+    const dz = Math.hypot(dx, dy) < 0.15;
+    touch.mx = dz ? 0 : dx; touch.my = dz ? 0 : dy;
+    knob.style.transform = 'translate(' + dx * JR * 0.5 + 'px,' + dy * JR * 0.5 + 'px)';
+  });
+  const jend = e => { if (e.pointerId !== jid) return; jid = null; touch.mx = touch.my = 0; stick.style.display = 'none'; };
+  zl.addEventListener('pointerup', jend); zl.addEventListener('pointercancel', jend);
+  // Umsehen rechts (wischen)
+  let lid = null, lx = 0;
+  zr.addEventListener('pointerdown', e => {
+    e.preventDefault(); actx(); if (gate() || lid !== null) return;
+    lid = e.pointerId; lx = e.clientX; cap(zr, lid);
+  });
+  zr.addEventListener('pointermove', e => { if (e.pointerId !== lid) return; mouseDX += (e.clientX - lx) * 1.7; lx = e.clientX; });
+  const lend = e => { if (e.pointerId === lid) lid = null; };
+  zr.addEventListener('pointerup', lend); zr.addEventListener('pointercancel', lend);
+  // Buttons
+  document.querySelectorAll('.tb').forEach(b => {
+    const act = b.dataset.act;
+    b.addEventListener('pointerdown', e => {
+      e.preventDefault(); actx(); if (gate()) return;
+      cap(b, e.pointerId); b.classList.add('on');
+      if (act === 'fire') fireHeld = true;
+      else if (act === 'use') useAction();
+      else if (act === 'wpn') { if (player.hasShotgun) player.weapon = player.weapon ? 0 : 1; else say('NUR PISTOLE', 1); }
+      else if (act === 'map') showMap = !showMap;
+    });
+    const up = () => { b.classList.remove('on'); if (act === 'fire') fireHeld = false; };
+    b.addEventListener('pointerup', up); b.addEventListener('pointercancel', up);
+  });
+  view.addEventListener('contextmenu', e => e.preventDefault());
+})();
+
 loadLevel();
 requestAnimationFrame(frame);
 
 // Testzugriff (Playwright / Konsole)
 window.__game = { get state() { return state; }, get player() { return player; }, get enemies() { return enemies; }, get doors() { return doors; },
-                  get stats() { return stats; }, get pickups() { return pickups; }, setState(s) { state = s; }, start: startGame, update, fire, useAction };
+                  get stats() { return stats; }, get pickups() { return pickups; }, setState(s) { state = s; }, start: startGame, update, fire, useAction, touch };
 </script>
 </body>
 </html>
